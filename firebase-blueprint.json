@@ -1,0 +1,21 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and Spotify credentials",
+      "type": "object",
+      "properties": {
+        "spotifyAccessToken": { "type": "string" },
+        "spotifyRefreshToken": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["spotifyAccessToken", "spotifyRefreshToken"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Stores Spotify tokens for each authenticated user"
+    }
+  }
+}
