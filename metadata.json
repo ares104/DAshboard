@@ -1,6 +1,6 @@
 {
-  "name": "Nexus Audio",
-  "description": "A brutalist Spotify dashboard with real-time synchronization and high-fidelity interface.",
+  "name": "Dash",
+  "description": "A minimalist monochrome Spotify dashboard named Dash.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

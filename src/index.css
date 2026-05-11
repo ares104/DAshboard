@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -7,6 +7,30 @@
 
 @layer base {
   body {
-    @apply font-sans antialiased bg-black text-white;
+    @apply font-sans antialiased bg-black text-white selection:bg-white/30 selection:text-white;
+  }
+}
+
+@layer utilities {
+  @keyframes spin-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  .animate-spin-slow {
+    animation: spin-slow 12s linear infinite;
+  }
+  @keyframes marquee {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
+  .animate-marquee {
+    display: inline-block;
+    white-space: nowrap;
+    animation: marquee 10s linear infinite;
+  }
+  .marquee-content {
+    display: flex;
+    white-space: nowrap;
+    min-width: 100%;
   }
 }

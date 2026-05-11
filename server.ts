@@ -11,6 +11,9 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// In-memory token store (replaces Firebase as requested)
+const tokenStore = new Map<string, string>();
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -31,12 +34,12 @@ async function startServer() {
 
   // Health check
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", service: "Nexus Audio .Node" });
+    res.json({ status: "ok", service: "Dash .Node" });
   });
 
   // Spotify Auth: Get Authorize URL
   app.get("/api/spotify/auth-url", (req, res) => {
-    const scope = "user-read-private user-read-email user-top-read playlist-read-private user-read-recently-played";
+    const scope = "user-read-private user-read-email user-top-read playlist-read-private user-read-recently-played user-read-playback-state user-modify-playback-state user-read-currently-playing";
     const redirectUri = getRedirectUri(req);
     
     const params = new URLSearchParams({
@@ -76,24 +79,31 @@ async function startServer() {
 
       const { access_token } = response.data;
       
-      // Store token in cookie (simple session management for this demo)
-      res.cookie('spotify_token', access_token, { 
+      const profileResponse = await axios.get("https://api.spotify.com/v1/me", {
+        headers: { Authorization: `Bearer ${access_token}` }
+      });
+
+      const spotifyUid = profileResponse.data.id;
+      tokenStore.set(spotifyUid, access_token);
+
+      res.cookie('spotify_uid', spotifyUid, { 
         httpOnly: true, 
         secure: true, 
         sameSite: 'none',
-        maxAge: 3600 * 1000 // 1 hour
+        maxAge: 3600 * 1000 
       });
 
       res.send(`
         <html>
           <body style="background: #000; color: #fff; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center;">
-            <div style="border: 2px solid #fff; padding: 3rem; background: #000;">
-              <h1 style="font-size: 3rem; font-weight: 900; text-transform: uppercase; font-style: italic; letter-spacing: -0.05em; margin: 0;">Uplink Secure</h1>
-              <p style="text-transform: uppercase; letter-spacing: 0.2rem; font-size: 0.7rem; opacity: 0.5; margin-top: 1rem;">Nexus Audio Node Synchronized</p>
+            <div style="background: #000; border: 2px solid #fff; padding: 3.5rem; border-radius: 0;">
+              <h1 style="color: #fff; font-size: 2.5rem; margin-bottom: 0.5rem; font-weight: 900; text-transform: uppercase; font-style: italic;">Dash .Node</h1>
+              <p style="opacity: 0.6; margin-bottom: 2.5rem; text-transform: uppercase; letter-spacing: 0.2em; font-size: 0.7rem;">Spotify node linked successfully.</p>
+              <div style="height: 2px; width: 40px; background: #fff; margin: 0 auto;"></div>
               <script>
                 if (window.opener) {
                   window.opener.postMessage({ type: 'SPOTIFY_AUTH_SUCCESS' }, '*');
-                  setTimeout(() => window.close(), 1000);
+                  setTimeout(() => window.close(), 1500);
                 } else {
                   window.location.href = '/';
                 }
@@ -111,34 +121,94 @@ async function startServer() {
   // Spotify Proxy Endpoints
   app.get("/api/spotify/:endpoint", async (req, res) => {
     const { endpoint } = req.params;
-    const token = req.cookies.spotify_token;
+    const spotifyUid = req.cookies.spotify_uid;
+    const token = spotifyUid ? tokenStore.get(spotifyUid) : null;
 
     if (!token) return res.status(401).json({ error: "Unauthorized" });
 
     try {
       let spotifyUrl = "";
+      let method = "GET";
+
+      let data = undefined;
+      let params = {};
+
       switch (endpoint) {
         case 'top-tracks': spotifyUrl = "https://api.spotify.com/v1/me/top/tracks?limit=12"; break;
         case 'playlists': spotifyUrl = "https://api.spotify.com/v1/me/playlists?limit=8"; break;
         case 'me': spotifyUrl = "https://api.spotify.com/v1/me"; break;
+        case 'now-playing': spotifyUrl = "https://api.spotify.com/v1/me/player/currently-playing"; break;
+        case 'play': 
+          spotifyUrl = "https://api.spotify.com/v1/me/player/play"; 
+          method = "PUT";
+          break;
+        case 'pause': 
+          spotifyUrl = "https://api.spotify.com/v1/me/player/pause"; 
+          method = "PUT";
+          break;
+        case 'next': 
+          spotifyUrl = "https://api.spotify.com/v1/me/player/next"; 
+          method = "POST";
+          break;
+        case 'previous': 
+          spotifyUrl = "https://api.spotify.com/v1/me/player/previous"; 
+          method = "POST";
+          break;
+        case 'seek':
+          spotifyUrl = "https://api.spotify.com/v1/me/player/seek";
+          method = "PUT";
+          params = { position_ms: req.query.position_ms };
+          break;
+        case 'volume':
+          spotifyUrl = "https://api.spotify.com/v1/me/player/volume";
+          method = "PUT";
+          params = { volume_percent: req.query.volume_percent };
+          break;
+        case 'devices':
+          spotifyUrl = "https://api.spotify.com/v1/me/player/devices";
+          break;
+        case 'transfer':
+          const deviceId = req.query.device_id;
+          spotifyUrl = "https://api.spotify.com/v1/me/player";
+          method = "PUT";
+          data = { device_ids: [deviceId], play: true };
+          break;
         default: return res.status(404).json({ error: "Endpoint not found" });
       }
 
-      const response = await axios.get(spotifyUrl, {
-        headers: { Authorization: `Bearer ${token}` }
+      const response = await axios({
+        url: spotifyUrl,
+        method: method,
+        headers: { Authorization: `Bearer ${token}` },
+        params: Object.keys(params).length > 0 ? params : undefined,
+        data: data || (method === 'PUT' || method === 'POST' ? {} : undefined)
       });
+
+      if (response.status === 204) {
+        return res.status(204).send();
+      }
 
       res.json(response.data);
     } catch (err: any) {
       if (err.response?.status === 401) {
-        res.clearCookie('spotify_token');
+        res.clearCookie('spotify_uid');
+        if (spotifyUid) tokenStore.delete(spotifyUid);
       }
-      res.status(err.response?.status || 500).json({ error: "Spotify API Error" });
+      if (err.response?.status === 204) {
+        return res.status(204).send();
+      }
+      res.status(err.response?.status || 500).json({ error: "Spotify API Error", details: err.response?.data });
     }
   });
 
   app.get("/api/logout", (req, res) => {
-    res.clearCookie('spotify_token');
+    const spotifyUid = req.cookies.spotify_uid;
+    if (spotifyUid) tokenStore.delete(spotifyUid);
+    res.clearCookie('spotify_uid', { 
+      httpOnly: true, 
+      secure: true, 
+      sameSite: 'none' 
+    });
     res.redirect('/');
   });
 
@@ -157,7 +227,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Nexus Audio .Node active on port ${PORT}`);
+    console.log(`Dash .Node active on port ${PORT}`);
   });
 }
 
